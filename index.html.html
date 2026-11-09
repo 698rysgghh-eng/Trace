@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Трейс — рисуй по контуру</title>
+<style>
+:root{--bg:#111;--panel:rgba(20,20,20,.82);--fg:#fff;--ac:#4f8cff;box-sizing:border-box}
+@media (prefers-color-scheme: dark){:root{--bg:#111;--panel:rgba(20,20,20,.82);--fg:#fff}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden;overscroll-behavior:none}
+#stage{position:fixed;inset:0;overflow:hidden;background:#000}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#ov{position:absolute;left:50%;top:50%;transform-origin:center;max-width:none;user-select:none;-webkit-user-drag:none;touch-action:none;opacity:.5;will-change:transform}
+#gest{position:absolute;inset:0;touch-action:none}
+#msg{position:absolute;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;text-align:center;padding:24px;font-size:16px;line-height:1.4}
+#bar{position:fixed;left:0;right:0;bottom:0;padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));background:var(--panel);backdrop-filter:blur(10px);display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:8px;align-items:center}
+button,label.btn{flex:1;background:#2a2a2a;color:var(--fg);border:0;border-radius:12px;padding:12px 6px;font-size:14px;text-align:center;cursor:pointer}
+button.on{background:var(--ac)}
+button.big,label.big{background:var(--ac);padding:14px 22px;font-size:16px;flex:none}
+input[type=range]{flex:1;height:32px;accent-color:var(--ac)}
+#pct{width:42px;text-align:right;font-variant-numeric:tabular-nums;font-size:14px}
+input[type=file]{display:none}
+#top{position:fixed;top:0;left:0;right:0;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 0;display:flex;justify-content:flex-end;pointer-events:none}
+#top button{pointer-events:auto;flex:none;padding:10px 14px;background:var(--panel)}
+.hide #bar,.hide #top{display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="v" playsinline muted autoplay></video>
+  <img id="ov" alt="" hidden>
+  <div id="gest"></div>
+  <div id="msg">
+    <div>Загрузи картинку и включи камеру, затем наложи рисунок на бумагу и обводи.</div>
+    <div class="row" style="flex:none">
+      <button class="big" id="cam">Включить камеру</button>
+    </div>
+    <small id="err" style="opacity:.8"></small>
+  </div>
+</div>
+<div id="top"><button id="hideBtn">Скрыть панель</button></div>
+<div id="bar">
+  <div class="row">
+    <span>Прозр.</span>
+    <input type="range" id="op" min="0" max="100" value="50">
+    <span id="pct">50%</span>
+  </div>
+  <div class="row">
+    <label class="btn" for="file">Картинка</label>
+    <input type="file" id="file" accept="image/*">
+    <button id="flip">Зеркало</button>
+    <button id="reset">Сброс</button>
+    <button id="lock">Замок</button>
+  </div>
+</div>
+<script>
+(function(){
+  var v=document.getElementById('v'),ov=document.getElementById('ov'),g=document.getElementById('gest'),
+      msg=document.getElementById('msg'),err=document.getElementById('err'),op=document.getElementById('op'),
+      pct=document.getElementById('pct'),lockBtn=document.getElementById('lock'),stage=document.getElementById('stage');
+  var st={x:0,y:0,s:1,r:0,f:1},locked=false,ptrs=new Map(),stream=null;
+
+  function apply(){ov.style.transform='translate(-50%,-50%) translate('+st.x+'px,'+st.y+'px) rotate('+st.r+'rad) scale('+(st.s*st.f)+','+st.s+')';}
+  function fit(){
+    var w=ov.naturalWidth,h=ov.naturalHeight;if(!w)return;
+    var k=Math.min(innerWidth/w,innerHeight/h)*0.9;
+    ov.style.width=(w*k)+'px';ov.style.height=(h*k)+'px';
+  }
+  function updMsg(){msg.style.display=(stream||!ov.hidden)&&stream?'none':'flex';}
+
+  async function startCam(){
+    err.textContent='';
+    try{
+      if(stream)stream.getTracks().forEach(function(t){t.stop();});
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+      v.srcObject=stream;await v.play().catch(function(){});
+      msg.style.display='none';
+    }catch(e){
+      stream=null;
+      err.textContent='Нет доступа к камере: '+(e&&e.message?e.message:e)+'. Разреши камеру в настройках браузера и открой страницу в Safari или Chrome напрямую.';
+    }
+  }
+  document.getElementById('cam').onclick=startCam;
+
+  document.getElementById('file').onchange=function(e){
+    var f=e.target.files&&e.target.files[0];if(!f)return;
+    var url=URL.createObjectURL(f);
+    ov.onload=function(){ov.hidden=false;st={x:0,y:0,s:1,r:0,f:1};fit();apply();};
+    ov.src=url;
+    if(!stream)startCam();
+  };
+  op.oninput=function(){ov.style.opacity=op.value/100;pct.textContent=op.value+'%';};
+  document.getElementById('flip').onclick=function(){st.f*=-1;apply();};
+  document.getElementById('reset').onclick=function(){st={x:0,y:0,s:1,r:0,f:1};apply();};
+  lockBtn.onclick=function(){locked=!locked;lockBtn.classList.toggle('on',locked);lockBtn.textContent=locked?'Закреплено':'Замок';};
+  document.getElementById('hideBtn').onclick=function(){document.body.classList.add('hide');};
+  stage.addEventListener('dblclick',function(){document.body.classList.remove('hide');});
+  var lastTap=0;
+  g.addEventListener('pointerup',function(){var n=Date.now();if(n-lastTap<300)document.body.classList.remove('hide');lastTap=n;});
+
+  function pair(){var a=Array.from(ptrs.values());return a.length>=2?a:null;}
+  g.addEventListener('pointerdown',function(e){
+    if(locked||ov.hidden)return;
+    g.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  });
+  g.addEventListener('pointermove',function(e){
+    if(locked||!ptrs.has(e.pointerId))return;
+    var old=ptrs.get(e.pointerId),prev=pair()&&pair().map(function(p){return {x:p.x,y:p.y};});
+    ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    var cur=pair();
+    if(cur&&prev){
+      var d0=Math.hypot(prev[0].x-prev[1].x,prev[0].y-prev[1].y),d1=Math.hypot(cur[0].x-cur[1].x,cur[0].y-cur[1].y);
+      var a0=Math.atan2(prev[1].y-prev[0].y,prev[1].x-prev[0].x),a1=Math.atan2(cur[1].y-cur[0].y,cur[1].x-cur[0].x);
+      if(d0>0)st.s*=d1/d0;
+      st.r+=(a1-a0)*st.f;
+      st.x+=((cur[0].x+cur[1].x)-(prev[0].x+prev[1].x))/2;
+      st.y+=((cur[0].y+cur[1].y)-(prev[0].y+prev[1].y))/2;
+    }else if(ptrs.size===1){
+      st.x+=e.clientX-old.x;st.y+=e.clientY-old.y;
+    }
+    apply();
+  });
+  function up(e){ptrs.delete(e.pointerId);}
+  g.addEventListener('pointerup',up);g.addEventListener('pointercancel',up);
+  g.addEventListener('wheel',function(e){if(locked)return;e.preventDefault();st.s*=e.deltaY<0?1.05:0.95;apply();},{passive:false});
+  addEventListener('resize',fit);
+})();
+</script>
+</body>
+</html>
